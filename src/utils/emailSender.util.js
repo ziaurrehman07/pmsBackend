@@ -45,23 +45,19 @@ const sendMail = async (subject, content, email) => {
 };
 
 const task = async () => {
-  const currentDate = getFormattedDate();
-
+  const currentDate = getFormattedDate().manipulateDate(currentDate, 1);
   try {
     const jobs = await Job.find({
-      lastDate: {
-        $lt: manipulateDate(currentDate, -1),
-        $gte: manipulateDate(currentDate, 1),
-      },
+      lastDate: currentDate     
     }).populate("company");
-
     const emails = await getAllStudentEmails();
+    console.log(emails);
     const subject = `Job Application Remainder`;
     if (jobs.length) {
       jobs.forEach(async (job) => {
-        const content = `Reminder: The last date to apply for ${job.designation} in ${job.company.name} is tomorrow.<br>Hurry up and apply Now.`;
+        const content = `Reminder: The last date to apply for ${job.designation} in ${job.company.name} is ${job.lastDate}.<br>Hurry up and apply Now.`;
         const mailResponse = await sendMail(subject, content, emails);
-        if (!mailResponse) {
+        if (mailResponse.success ===false) {
           throw new ApiError(400, "Email not sent ");
         }
       });

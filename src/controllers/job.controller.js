@@ -84,7 +84,7 @@ const getAllJobProfile = asyncHandler(async (req, res) => {
     .select("_id company designation salaryPackage createdAt")
     .populate({
       path: "company",
-      select: "name",
+      select: "name avatar",
     });
 
   if (!jobs.length) {
@@ -183,7 +183,7 @@ const applyForJob = asyncHandler(async (req, res) => {
       student.college_cgpa >= isJobAvailable.criteria_cllg_cgpa &&
       student.resume !== "" &&
       currentDate <= isJobAvailable.lastDate &&
-      student.isPlaced === false
+      (student.isPlaced === false || student.designation.salaryPackage<isJobAvailable.salaryPackage)
     )
   ) {
     throw new ApiError(400, "You are not eligible for this job profile");
@@ -238,10 +238,14 @@ const getCompanyAllJobs = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Unauthorized access");
   }
 
-  const jobs = await Job.find({ company: companyId }).select(
-    "designation lastDate"
+  const jobs = await Job.find({ company: companyId })
+  .populate({
+    path:"company",
+    select:"avatar"
+  })
+  .select(
+    "designation lastDate company"
   );
-
   if (!jobs.length) {
     return res.status(404).json(new ApiResponse(404, {}, "No Jobs found!"));
   }

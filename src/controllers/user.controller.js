@@ -11,8 +11,11 @@ import {
 import jwt from "jsonwebtoken";
 import { sendMail } from "../utils/emailSender.util.js";
 import { Notice } from "../models/notification.model.js";
-import  mongoose  from "mongoose";
 import { getFormattedDate } from "../utils/getCurrentDate.util.js";
+import { Otps } from "../models/emailOtp.model.js";
+import { Feedback } from "../models/feedback.model.js";
+import csv from "fast-csv"
+import fs from "fs"
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -30,6 +33,10 @@ const generateAccessAndRefreshTokens = async (userId) => {
       "Something went wrong while generating access and refresh tokens"
     );
   }
+};
+
+const otpGenerator = () => {
+  return Math.floor(1000 + Math.random() * 9000);
 };
 
 const registerStudent = asyncHandler(async (req, res) => {
@@ -425,12 +432,14 @@ const placedStudentsListByAdmin = asyncHandler(async (req, res) => {
   }
   return res
     .status(200)
-    .json(new ApiResponse(200, students, "Placed student list fetched successfully"));
+    .json(
+      new ApiResponse(200, students, "Placed student list fetched successfully")
+    );
 });
 
 const placedStudentsListByCompany = asyncHandler(async (req, res) => {
   const students = await Company.aggregate([
-    { $match: { _id: req.company?._id }},
+    { $match: { _id: req.company?._id } },
     { $unwind: "$selectedStudents" },
     {
       $lookup: {
@@ -447,7 +456,7 @@ const placedStudentsListByCompany = asyncHandler(async (req, res) => {
         _id: "$user._id",
         fullName: "$user.fullName",
         avatar: "$user.avatar",
-        enrollment: "$user.enrollment"
+        enrollment: "$user.enrollment",
       },
     },
   ]);
@@ -457,7 +466,13 @@ const placedStudentsListByCompany = asyncHandler(async (req, res) => {
   }
   return res
     .status(200)
-    .json(new ApiResponse(200, students, "Places Student list fetched successfully!"));
+    .json(
+      new ApiResponse(
+        200,
+        students,
+        "Places Student list fetched successfully!"
+      )
+    );
 });
 
 const placedStudentsDetailsById = asyncHandler(async (req, res) => {
@@ -525,6 +540,8 @@ const deleteStudent = asyncHandler(async (req, res) => {
       const response = await deleteFromCloudinary(student.resume, folder2);
     }
 
+    const feedback = await Feedback.deleteMany({owner:student._id})
+
     return res
       .status(200)
       .json(new ApiResponse(200, student, "Student deleted successfully"));
@@ -562,6 +579,7 @@ const deleteCompany = asyncHandler(async (req, res) => {
     if (company.avatar) {
       const response = await deleteFromCloudinary(company.avatar, folder);
     }
+    const feedback = await Feedback.deleteMany({companyOwner:company._id})
 
     return res
       .status(200)
@@ -657,32 +675,163 @@ const deleteNoticeByAdmin = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "Notice deleted Successfully!"));
 });
 
-const activeJobCount = asyncHandler(async(req,res)=>{
-  const currentDate = getFormattedDate()
-  const jobs = await Job.find({
-    lastDate: {
-      $gte: currentDate
+const activeJobCount = asyncHandler(async (req, res) => {
+  const currentDate = getFormattedDate();
+  const jobs = await Job.find(
+    {
+      lastDate: {
+        $gte: currentDate,
+      },
+    },
+    {
+      _id: 1,
     }
-  },{
-    _id:1
-  })
+  );
 
-  const jobCount = jobs.length
+  const jobCount = jobs.length;
 
-  if(!jobCount){
+  if (!jobCount) {
     return res
-    .status(404)
-    .json(
-      new ApiResponse(404,{},"No Active Jobs found!")
-    )
+      .status(404)
+      .json(new ApiResponse(404, {}, "No Active Jobs found!"));
   }
 
   return res
     .status(200)
     .json(
-      new ApiResponse(200,jobCount,"Active Job count fetced successfully!")
-    )
-})
+      new ApiResponse(200, jobCount, "Active Job count fetced successfully!")
+    );
+});
+
+const generateOtpForVerification = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const existedUser = await User.findOne({ email: email });
+  if (existedUser) {
+    throw new ApiError(400, "Email is already registered. Try differrent One!");
+  }
+  const generatedOtp = otpGenerator();
+  const emailOtp = await Otps.findOne({ email: email });
+  let otp;
+  if (emailOtp) {
+    otp = await Otps.findByIdAndUpdate(
+      emailOtp,
+      {
+        otp: generatedOtp,
+      },
+      {
+        new: true,
+      }
+    );
+  } else {
+    otp = await Otps.create({
+      email: email,
+      otp: generatedOtp,
+    });
+  }
+
+  if (!otp) {
+    throw new ApiError(
+      400,
+      "Something went wrong while generating OTP! Please try again later."
+    );
+  }
+  const subject = `Email Verification`;
+  const content = `Your OTP for email  verification : ${generatedOtp} `;
+  const mailResponse = await sendMail(subject, content, email);
+  if (mailResponse.success == false) {
+    throw new ApiError(503, "Failed to Send Email");
+  }
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "OTP generated and sent successfully!"));
+});
+
+const verifyOtpForEmail = asyncHandler(async (req, res) => {
+  const { otpNumber } = req.body;
+  const { email } = req.body;
+  const emailOtp = await Otps.findOne({ email: email });
+  if (!emailOtp) {
+    throw new ApiError(404, "Email not found!");
+  }
+  if (otpNumber !== emailOtp.otp) {
+    console.log(otpNumber + " " +emailOtp.otp+" "+ email);
+    throw new ApiError(401, "Invalid OTP!");
+  }
+
+  await Otps.findByIdAndDelete(emailOtp._id);
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "OTP verified Successfully!"));
+});
+
+const downloadPlacedStudentsCSV = asyncHandler(async (req, res) => {
+  try {
+    const usersdata = await User.find({isPlaced:true})
+    .select("-password -refreshToken")
+    .populate({
+      path:"designation",
+      select:"company salaryPackage designation",
+      populate:{
+        path:"company",
+        select:"name"
+      }
+    })
+    if (usersdata.length === 0) {
+      throw new ApiError(404, "No students found for this job");
+    }
+
+    const csvStream = csv.format({ headers: true });
+
+    if (!fs.existsSync("../public/files/export/")) {
+      if (!fs.existsSync("../public/files")) {
+        fs.mkdirSync("../public/files/");
+      }
+      if (!fs.existsSync("../public/files/export")) {
+        fs.mkdirSync("../public/files/export/");
+      }
+    }
+
+    const writablestream = fs.createWriteStream(
+      "../public/files/export/placedStudents.csv"
+    );
+
+    csvStream.pipe(writablestream);
+
+    usersdata.forEach((user) => {
+      csvStream.write({
+        "Full Name": user.fullName || "-",
+        "Branch": user.branch || "-",
+        Enrollment: user.enrollment || "-",
+        Email: user.email || "-",
+        "Mobile No.": user.mobile || "-",
+        "10th Result": user.result_10 || "-",
+        "12th Result": user.result_12 || "-",
+        "UG Result": user.college_cgpa || "-",
+        "Package (in LPA)": user.designation.salaryPackage || "-",
+        "Designation": user.designation.designation || "-",
+        "Company": user.designation.company.name || "-",
+        Address: user.address || "-",
+      });
+    });
+
+    csvStream.end();
+
+    writablestream.on("finish", function () {
+      console.log("Successfully converted into CSV file!");
+      res
+        .status(200)
+        .setHeader("Content-disposition", "attachment; filename=placedStudents.csv")
+        .set("Content-Type", "text/csv")
+        .send(fs.readFileSync("../public/files/export/placedStudents.csv"));
+    });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(error.statusCode || 500)
+      .json(new ApiResponse(error.statusCode || 500, {}, error.message));
+  }
+});
 
 export {
   registerStudent,
@@ -708,5 +857,8 @@ export {
   publishNewNotice,
   getAllNotice,
   deleteNoticeByAdmin,
-  activeJobCount
+  activeJobCount,
+  generateOtpForVerification,
+  verifyOtpForEmail,
+  downloadPlacedStudentsCSV
 };
