@@ -9,13 +9,13 @@ dotenv.config({
 const app = express();
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 
-// app.use(
-//   cors({
-//     origin: "https://pmsfrontend-563q.onrender.com",
-//     Credential: true,
-//     methods: "GET,POST,PUT,DELETE", // Allowed HTTP methods
-//   })
-// );
+app.use(
+  cors({
+    origin: "process.env.CORS_ORIGIN",
+    Credential: true,
+    methods: "GET,POST,PUT,DELETE", // Allowed HTTP methods
+  })
+);
 
 app.use(express.json({ limit: "16kb" }));
 app.use(express.static("public"));
