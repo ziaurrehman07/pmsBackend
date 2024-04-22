@@ -7,13 +7,24 @@ dotenv.config({
   path: "../.env",
 });
 const app = express();
+const prodOrigins = [process.env.ORIGIN_1, process.env.ORIGIN_2];
+const devOrigin = ["http://localhost:5173"];
+const allowedOrigins =
+  process.env.NODE_ENV === "production" ? prodOrigins : devOrigin;
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 
 app.use(
   cors({
-    origin: "process.env.CORS_ORIGIN",
+    origin: (origin, callback) => {
+      if (allowedOrigins.includes(origin)) {
+        console.log(origin, allowedOrigins);
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     Credential: true,
-    methods: "GET,POST,PUT,DELETE", // Allowed HTTP methods
+    methods: ["GET", "POST", "PUT", "DELETE"], // Allowed HTTP methods
   })
 );
 
