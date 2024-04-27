@@ -10,7 +10,7 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 
 app.use(
   cors({
-    origin: "https://pmsfrontend-563q.onrender.com",
+    origin: "CORS_ORIGIN",
     Credential: true,
     methods: "GET,POST,PUT,DELETE", // Allowed HTTP methods
   })
